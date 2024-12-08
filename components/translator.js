@@ -1,116 +1,77 @@
+"use strict";
+
 const americanOnly = require("./american-only.js");
 const americanToBritishSpelling = require("./american-to-british-spelling.js");
 const americanToBritishTitles = require("./american-to-british-titles.js");
 const britishOnly = require("./british-only.js");
 
-const reverseDict = (obj) => {
-    return Object.assign(
-        {},
-        ...Object.entries(obj).map(([k, v]) => ({ [v]: k }))
-    );
-};
+const reverseDict = (obj) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [v, k]));
 
 class Translator {
-    toBritishEnglish(text) {
-        const dict = { ...americanOnly, ...americanToBritishSpelling };
-        const titles = americanToBritishTitles;
-        const timeRegex = /([1-9]|1[012]):[0-5][0-9]/g;
-        const translated = this.translate(
-            text,
-            dict,
-            titles,
-            timeRegex,
-            "toBritish"
-        );
-        if (!translated) {
-            return text;
-        }
+    constructor() {
+        this.dictBritish = { ...americanOnly, ...americanToBritishSpelling };
+        this.dictAmerican = { ...britishOnly, ...reverseDict(americanToBritishSpelling) };
+        this.titlesBritish = americanToBritishTitles;
+        this.titlesAmerican = reverseDict(americanToBritishTitles);
+        this.timeRegexBritish = /([1-9]|1[012]):[0-5][0-9]/g;
+        this.timeRegexAmerican = /([1-9]|1[012])\.([0-5][0-9])/g;
+    }
 
-        return translated;
+    toBritishEnglish(text) {
+        return this.translate(text, this.dictBritish, this.titlesBritish, this.timeRegexBritish, "toBritish");
     }
+
     toAmericanEnglish(text) {
-        const dict = { ...britishOnly, ...reverseDict(americanToBritishSpelling) };
-        const titles = reverseDict(americanToBritishTitles);
-        const timeRegex = /([1-9]|1[012]).[0-5][0-9]/g;
-        const translated = this.translate(
-            text,
-            dict,
-            titles,
-            timeRegex,
-            "toAmerican"
-        );
-        if (!translated) {
-            return text;
-        }
-        return translated;
+        return this.translate(text, this.dictAmerican, this.titlesAmerican, this.timeRegexAmerican, "toAmerican");
     }
+
     translate(text, dict, titles, timeRegex, locale) {
         const lowerText = text.toLowerCase();
-        const matchesMap = {};
+        const matchesMap = {...this.findMatches(lowerText, dict, titles), ...this.findTimeMatches(lowerText, timeRegex, locale)};
 
-        // Search for titles/honorifics and add'em to the matchesMap object
-        Object.entries(titles).map(([k, v]) => {
+        // No matches
+        if (Object.keys(matchesMap).length === 0) return null;
+
+        return [this.replaceAll(text, matchesMap), this.replaceAllWithHighlight(text, matchesMap)];
+    }
+
+    findMatches(lowerText, dict, titles) {
+        const matchesMap = {};
+        Object.entries(titles).forEach(([k, v]) => {
             if (lowerText.includes(k)) {
                 matchesMap[k] = v.charAt(0).toUpperCase() + v.slice(1);
             }
         });
 
-        // Filter words with spaces from current dictionary
-        const wordsWithSpace = Object.fromEntries(
-            Object.entries(dict).filter(([k, v]) => k.includes(" "))
-        );
-
-        // Search for spaced word matches and add'em to the matchesMap object
-        Object.entries(wordsWithSpace).map(([k, v]) => {
-            if (lowerText.includes(k)) {
-                matchesMap[k] = v;
-            }
-        });
-
-        // Search for individual word matches and add'em to the matchesMap object
-        lowerText.match(/(\w+([-'])(\w+)?['-]?(\w+))|\w+/g).forEach((word) => {
+        // Check individual word matches
+        lowerText.match(/(\w+([-'])(\w+)?['-]?(\w+))|\w+/g)?.forEach(word => {
             if (dict[word]) matchesMap[word] = dict[word];
         });
 
-        // Search for time matches and add'em to the matchesMap object
-        const matchedTimes = lowerText.match(timeRegex);
+        // Filter words with spaces from current dictionary
+        Object.entries(Object.fromEntries(Object.entries(dict).filter(([k]) => k.includes(" ")))).forEach(([k, v]) => {
+            if (lowerText.includes(k)) matchesMap[k] = v;
+        });
 
-        if (matchedTimes) {
-            matchedTimes.map((e) => {
-                if (locale === "toBritish") {
-                    return (matchesMap[e] = e.replace(":", "."));
-                }
-                return (matchesMap[e] = e.replace(".", ":"));
-            });
-        }
+        return matchesMap;
+    }
 
-        // No matches
-        if (Object.keys(matchesMap).length === 0) return null;
-        // Return logic
-        console.log("matchesMap :>> ", matchesMap);
-        const translation = this.replaceAll(text, matchesMap);
-
-        const translationWithHighlight = this.replaceAllWithHighlight(
-            text,
-            matchesMap
-        );
-
-        return [translation, translationWithHighlight];
+    findTimeMatches(lowerText, timeRegex, locale) {
+        const matchesMap = {};
+        lowerText.match(timeRegex)?.forEach(time => {
+            matchesMap[time] = locale === "toBritish" ? time.replace(":", ".") : time.replace(".", ":");
+        });
+        return matchesMap;
     }
 
     replaceAll(text, matchesMap) {
-        // matchesMap :>>  { favorite: 'favourite' }
-        // text :>>  Mangoes are my favorite fruit.
         const re = new RegExp(Object.keys(matchesMap).join("|"), "gi");
-        return text.replace(re, (matched) => matchesMap[matched.toLowerCase()]);
+        return text.replace(re, matched => matchesMap[matched.toLowerCase()]);
     }
+
     replaceAllWithHighlight(text, matchesMap) {
         const re = new RegExp(Object.keys(matchesMap).join("|"), "gi");
-        return text.replace(re, (matched) => {
-            return `<span class="highlight">${
-                matchesMap[matched.toLowerCase()]
-            }</span>`;
-        });
+        return text.replace(re, matched => `<span class="highlight">${matchesMap[matched.toLowerCase()]}</span>`);
     }
 }
 
